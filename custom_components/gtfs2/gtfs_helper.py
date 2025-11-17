@@ -1079,12 +1079,12 @@ def get_local_stops_next_departures(self):
             self._route_id = row['route_id'] 
             self._stop_id = row['stop_id']
             self._stop_sequence = row['stop_sequence']
-            _LOGGER.debug("Row departure_time: %s", row["departure_time"])              
+            _LOGGER.debug("Row departure_time: %s", row["departure_time"])
             # collect departure time from row, using agency timezone as basis, then transforming it to the stop-specific timezone (based on Amtrak)
             self._departure_datetime = datetime.datetime.strptime(now_date + " " + row["departure_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone_agency).astimezone(tz=timezone_stop)
             self._departure_datetime_utc = dt_util.as_utc(self._departure_datetime)
             _LOGGER.debug("Self._departure datetime in agency_tz: %s", self._departure_datetime)
-            self._departure_time = self._departure_datetime.replace(tzinfo=None).strftime(TIME_STR_FORMAT)       
+            self._departure_time = self._departure_datetime.replace(tzinfo=None).strftime(TIME_STR_FORMAT)
             _LOGGER.debug("Self._departure time in stop tz: %s", self._departure_time)
             departure_rt = "-"
             departure_rt_datetime = '-'
@@ -1096,30 +1096,50 @@ def get_local_stops_next_departures(self):
                 _LOGGER.debug("Find rt for local stop route: %s - direction: %s - stop: %s - stop_sequence: %s", self._route , self._direction, self._stop_id, self._stop_sequence)
                 next_service = get_rt_route_trip_statuses(self)
                 _LOGGER.debug("Next service: %s", next_service)
-                if next_service:                       
+                if next_service:
                     delays = next_service.get(self._route, {}).get(self._direction, {}).get(self._stop_id, []).get("delays", [])
                     departures = next_service.get(self._route, {}).get(self._direction, {}).get(self._stop_id, []).get("departures", [])
                     delay_rt = delays[0] if delays else "-"
                     departure_rt = departures[0] if departures else "-"
                     departure_rt_datetime = departure_rt
-                _LOGGER.debug("Departure rt: %s, Delay rt: %s", departure_rt, delay_rt)   
+                _LOGGER.debug("Departure rt: %s, Delay rt: %s", departure_rt, delay_rt)
+
+            # Determine the correct date for the departure to handle midnight boundary crossings
+            # If we're in early morning (before 4 AM) and the departure time is late at night (after 8 PM),
+            # this is likely yesterday's service that has already passed
+            # If we're in late evening (after 8 PM) and the departure time is early morning (before 4 AM),
+            # this is likely tomorrow's service
+            departure_date_for_comparison = now_date
+            now_hour = now.hour
+            departure_hour = datetime.datetime.strptime(row["departure_time"], "%H:%M:%S").hour
+            if now_hour < 4 and departure_hour >= 20:
+                # Early morning now, late night departure = yesterday's service
+                yesterday = now - datetime.timedelta(days=1)
+                departure_date_for_comparison = yesterday.strftime(dt_util.DATE_STR_FORMAT)
+                _LOGGER.debug("Midnight boundary detected: using yesterday's date %s for departure time %s", departure_date_for_comparison, row["departure_time"])
+            elif now_hour >= 20 and departure_hour < 4:
+                # Late evening now, early morning departure = tomorrow's service
+                tomorrow_for_comparison = now + datetime.timedelta(days=1)
+                departure_date_for_comparison = tomorrow_for_comparison.strftime(dt_util.DATE_STR_FORMAT)
+                _LOGGER.debug("Midnight boundary detected: using tomorrow's date %s for departure time %s", departure_date_for_comparison, row["departure_time"])
+
             if departure_rt != '-':
                 depart_time_corrected_time = departures[0].astimezone(tz=timezone_stop)
                 departure_rt = depart_time_corrected_time.replace(tzinfo=None).strftime(TIME_STR_FORMAT)
                 td = abs(depart_time_corrected_time - self._departure_datetime)
                 if td.seconds != 0 and depart_time_corrected_time < self._departure_datetime :
                     delay_rt_derived = '-' + str(td)
-                elif td.seconds != 0: 
+                elif td.seconds != 0:
                     delay_rt_derived = str(td)
-                _LOGGER.debug("Delay derived: %s, departure_rt: %s", delay_rt_derived,departure_rt) 
-            else: 
-                depart_time_corrected_time = (dt_util.parse_datetime(f"{now_date} {self._departure_time}")).replace(tzinfo=timezone_stop)
-            _LOGGER.debug("Departure time corrected based on realtime-time: %s", depart_time_corrected_time)    
+                _LOGGER.debug("Delay derived: %s, departure_rt: %s", delay_rt_derived,departure_rt)
+            else:
+                depart_time_corrected_time = (dt_util.parse_datetime(f"{departure_date_for_comparison} {self._departure_time}")).replace(tzinfo=timezone_stop)
+            _LOGGER.debug("Departure time corrected based on realtime-time: %s", depart_time_corrected_time)
             if delay_rt != '-' and delay_rt != 0 :
-                depart_time_corrected_delay = (dt_util.parse_datetime(f"{now_date} {self._departure_time}") + datetime.timedelta(seconds=delay_rt)).replace(tzinfo=timezone_stop)
+                depart_time_corrected_delay = (dt_util.parse_datetime(f"{departure_date_for_comparison} {self._departure_time}") + datetime.timedelta(seconds=delay_rt)).replace(tzinfo=timezone_stop)
             else:
                 delay_rt = '-'
-                depart_time_corrected_delay = dt_util.parse_datetime(f"{now_date} {self._departure_time}").replace(tzinfo=timezone_stop)                
+                depart_time_corrected_delay = dt_util.parse_datetime(f"{departure_date_for_comparison} {self._departure_time}").replace(tzinfo=timezone_stop)                
             _LOGGER.debug("Departure time corrected based on realtime-delay: %s", depart_time_corrected_delay)   
 
             if depart_time_corrected_delay > depart_time_corrected_time: 
