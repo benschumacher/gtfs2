@@ -463,6 +463,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class GTFSOptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
+        super().__init__()
         self._data: dict[str, str] = {}
         self._user_inputs: dict = {}
 
